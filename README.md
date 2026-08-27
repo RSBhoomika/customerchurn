@@ -168,6 +168,8 @@ Experiment `customer-churn`, metrics, and registered model.
 
 ![MLflow experiment](screenshots/mlflow-experiment.png)
 
+![MLflow modelMetrics](screenshots/mlflow-modelmetrics.png)
+
 
 ### Streamlit
 
