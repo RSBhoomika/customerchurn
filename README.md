@@ -42,51 +42,6 @@ Dataset → pipeline → registry    Inference API → human UI
 
 ## Architecture
 
-```text
-                    ┌─────────────────────┐
-                    │  Telco churn CSV    │
-                    └──────────┬──────────┘
-                               │
-                               ▼
-                    ┌─────────────────────┐
-                    │ Kubeflow Pipeline   │
-                    │                     │
-                    │ 1. Prepare data     │
-                    │ 2. Train model      │
-                    │ 3. Evaluate model   │
-                    │ 4. Register model   │
-                    │ 5. Verify load      │
-                    └──────────┬──────────┘
-                               │
-                               ▼
-                    ┌─────────────────────┐
-                    │       MLflow        │
-                    │  experiments,       │
-                    │  metrics, artifacts │
-                    │  model registry     │
-                    │         +           │
-                    │ MinIO s3://modelpath│
-                    └──────────┬──────────┘
-                               │
-                         approved artifact
-                               │
-                               ▼
-                    ┌─────────────────────┐
-                    │       KServe        │
-                    │                     │
-                    │  POST /invocations  │
-                    └──────────┬──────────┘
-                               │
-                            HTTP
-                               │
-                               ▼
-                    ┌─────────────────────┐
-                    │     Streamlit       │
-                    │  customer form      │
-                    │  stay / churn risk  │
-                    └─────────────────────┘
-```
-
 ```mermaid
 flowchart TB
   subgraph train [Training]
@@ -141,7 +96,7 @@ Cluster assets (on the VM) typically include `pipeline.py`, KServe YAML, and a N
 
 ---
 
-## How to run (short)
+## How to run 
 
 **Streamlit** (API URL via env only; not shown in the UI)
 
@@ -151,10 +106,6 @@ streamlit run app/streamlit_app.py
 ```
 
 ---
-
-## Screenshots
-
-Drop PNG files into `screenshots/` using the names below.
 
 ### Kubeflow pipeline
 
