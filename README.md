@@ -77,7 +77,7 @@ flowchart TB
 
 ---
 
-## Repository layout (local)
+## Repository layout 
 
 ```text
 customerchurn/
