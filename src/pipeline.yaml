@@ -1,0 +1,498 @@
+# PIPELINE DEFINITION
+# Name: customer-churn-training
+# Inputs:
+#    aws_access_key_id: str [Default: '****']
+#    aws_secret_access_key: str [Default: '****']
+#    data_url: str [Default: 'https://raw.githubusercontent.com/IBM/telco-customer-churn-on-icp4d/master/data/Telco-Customer-Churn.csv']
+#    experiment_name: str [Default: 'customer-churn']
+#    mlflow_s3_endpoint_url: str [Default: 'http://<MINIO_ENDPOINT>']
+#    mlflow_tracking_uri: str [Default: 'http://<MLFLOW_TRACKING_URI>']
+#    model_type: str [Default: 'logreg_balanced']
+#    registered_model_name: str [Default: 'customer-churn']
+components:
+  comp-evaluate-model:
+    executorLabel: exec-evaluate-model
+    inputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+        test_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        experiment_name:
+          parameterType: STRING
+        mlflow_tracking_uri:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+  comp-prepare-data:
+    executorLabel: exec-prepare-data
+    inputDefinitions:
+      parameters:
+        data_url:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        test_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        train_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-register-model:
+    executorLabel: exec-register-model
+    inputDefinitions:
+      parameters:
+        aws_access_key_id:
+          parameterType: STRING
+        aws_secret_access_key:
+          parameterType: STRING
+        mlflow_s3_endpoint_url:
+          parameterType: STRING
+        mlflow_tracking_uri:
+          parameterType: STRING
+        registered_model_name:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        version:
+          parameterType: STRING
+  comp-train-model:
+    executorLabel: exec-train-model
+    inputDefinitions:
+      artifacts:
+        train_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        aws_access_key_id:
+          parameterType: STRING
+        aws_secret_access_key:
+          parameterType: STRING
+        experiment_name:
+          parameterType: STRING
+        mlflow_s3_endpoint_url:
+          parameterType: STRING
+        mlflow_tracking_uri:
+          parameterType: STRING
+        model_type:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        run_id:
+          parameterType: STRING
+  comp-verify-model:
+    executorLabel: exec-verify-model
+    inputDefinitions:
+      parameters:
+        aws_access_key_id:
+          parameterType: STRING
+        aws_secret_access_key:
+          parameterType: STRING
+        mlflow_s3_endpoint_url:
+          parameterType: STRING
+        mlflow_tracking_uri:
+          parameterType: STRING
+        registered_model_name:
+          parameterType: STRING
+        version:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-evaluate-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - evaluate_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas' 'scikit-learn'\
+          \ 'mlflow' 'pyarrow'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef evaluate_model(\n    test_data: Input[Dataset],\n    model: Input[Model],\n\
+          \    run_id: str,\n    experiment_name: str,\n    mlflow_tracking_uri: str,\n\
+          ):\n    import os\n\n    import joblib\n    import mlflow\n    import pandas\
+          \ as pd\n    from sklearn.metrics import (\n        accuracy_score,\n  \
+          \      f1_score,\n        precision_score,\n        recall_score,\n    \
+          \    roc_auc_score,\n    )\n\n    os.environ[\"MLFLOW_TRACKING_URI\"] =\
+          \ mlflow_tracking_uri\n    os.environ[\"GIT_PYTHON_REFRESH\"] = \"quiet\"\
+          \n    mlflow.set_tracking_uri(mlflow_tracking_uri)\n    mlflow.set_experiment(experiment_name)\n\
+          \n    test_df = pd.read_parquet(test_data.path)\n    y = test_df[\"Churn\"\
+          ]\n    X = test_df.drop(columns=[\"Churn\"])\n    pipe = joblib.load(model.path)\n\
+          \n    y_pred = pipe.predict(X)\n    y_prob = pipe.predict_proba(X)[:, 1]\n\
+          \n    with mlflow.start_run(run_id=run_id):\n        mlflow.log_metrics(\n\
+          \            {\n                \"accuracy\": float(accuracy_score(y, y_pred)),\n\
+          \                \"precision\": float(precision_score(y, y_pred)),\n   \
+          \             \"recall\": float(recall_score(y, y_pred)),\n            \
+          \    \"f1\": float(f1_score(y, y_pred)),\n                \"roc_auc\": float(roc_auc_score(y,\
+          \ y_prob)),\n            }\n        )\n\n"
+        image: python:3.12-slim
+    exec-prepare-data:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - prepare_data
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas' 'scikit-learn'\
+          \ 'pyarrow'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef prepare_data(\n    data_url: str,\n    train_data: Output[Dataset],\n\
+          \    test_data: Output[Dataset],\n):\n    import pandas as pd\n    from\
+          \ sklearn.model_selection import train_test_split\n\n    df = pd.read_csv(data_url)\n\
+          \    df = df.drop(columns=[\"customerID\"])\n    df[\"TotalCharges\"] =\
+          \ pd.to_numeric(df[\"TotalCharges\"], errors=\"coerce\").fillna(0)\n   \
+          \ df[\"Churn\"] = (df[\"Churn\"] == \"Yes\").astype(int)\n\n    train_df,\
+          \ test_df = train_test_split(\n        df, test_size=0.2, random_state=42,\
+          \ stratify=df[\"Churn\"]\n    )\n    train_df.to_parquet(train_data.path,\
+          \ index=False)\n    test_df.to_parquet(test_data.path, index=False)\n\n"
+        image: python:3.12-slim
+    exec-register-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - register_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'mlflow' 'boto3'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef register_model(\n    run_id: str,\n    registered_model_name:\
+          \ str,\n    mlflow_tracking_uri: str,\n    mlflow_s3_endpoint_url: str,\n\
+          \    aws_access_key_id: str,\n    aws_secret_access_key: str,\n) -> NamedTuple(\"\
+          RegOut\", [(\"version\", str)]):\n    import os\n    from collections import\
+          \ namedtuple\n\n    import mlflow\n\n    os.environ[\"MLFLOW_TRACKING_URI\"\
+          ] = mlflow_tracking_uri\n    os.environ[\"MLFLOW_S3_ENDPOINT_URL\"] = mlflow_s3_endpoint_url\n\
+          \    os.environ[\"AWS_ACCESS_KEY_ID\"] = aws_access_key_id\n    os.environ[\"\
+          AWS_SECRET_ACCESS_KEY\"] = aws_secret_access_key\n    os.environ[\"AWS_DEFAULT_REGION\"\
+          ] = \"us-east-1\"\n    os.environ[\"MLFLOW_S3_IGNORE_TLS\"] = \"true\"\n\
+          \    os.environ[\"GIT_PYTHON_REFRESH\"] = \"quiet\"\n\n    mlflow.set_tracking_uri(mlflow_tracking_uri)\n\
+          \    mv = mlflow.register_model(f\"runs:/{run_id}/model\", registered_model_name)\n\
+          \    return namedtuple(\"RegOut\", [\"version\"])(str(mv.version))\n\n"
+        image: python:3.12-slim
+    exec-train-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas' 'scikit-learn'\
+          \ 'mlflow' 'pyarrow' 'boto3'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train_model(\n    train_data: Input[Dataset],\n    model_type:\
+          \ str,\n    experiment_name: str,\n    mlflow_tracking_uri: str,\n    mlflow_s3_endpoint_url:\
+          \ str,\n    aws_access_key_id: str,\n    aws_secret_access_key: str,\n \
+          \   model: Output[Model],\n) -> NamedTuple(\"TrainOut\", [(\"run_id\", str)]):\n\
+          \    import os\n    from collections import namedtuple\n\n    import joblib\n\
+          \    import mlflow\n    import mlflow.sklearn\n    import pandas as pd\n\
+          \    from sklearn.compose import ColumnTransformer\n    from sklearn.ensemble\
+          \ import RandomForestClassifier\n    from sklearn.linear_model import LogisticRegression\n\
+          \    from sklearn.pipeline import Pipeline\n    from sklearn.preprocessing\
+          \ import OneHotEncoder, StandardScaler\n\n    os.environ[\"MLFLOW_TRACKING_URI\"\
+          ] = mlflow_tracking_uri\n    os.environ[\"MLFLOW_S3_ENDPOINT_URL\"] = mlflow_s3_endpoint_url\n\
+          \    os.environ[\"AWS_ACCESS_KEY_ID\"] = aws_access_key_id\n    os.environ[\"\
+          AWS_SECRET_ACCESS_KEY\"] = aws_secret_access_key\n    os.environ[\"AWS_DEFAULT_REGION\"\
+          ] = \"us-east-1\"\n    os.environ[\"MLFLOW_S3_IGNORE_TLS\"] = \"true\"\n\
+          \    os.environ[\"GIT_PYTHON_REFRESH\"] = \"quiet\"\n\n    mlflow.set_tracking_uri(mlflow_tracking_uri)\n\
+          \    mlflow.set_experiment(experiment_name)\n\n    train_df = pd.read_parquet(train_data.path)\n\
+          \    y = train_df[\"Churn\"]\n    X = train_df.drop(columns=[\"Churn\"])\n\
+          \n    numeric = X.select_dtypes(include=[\"int64\", \"float64\"]).columns.tolist()\n\
+          \    categorical = X.select_dtypes(include=[\"object\"]).columns.tolist()\n\
+          \    preprocessor = ColumnTransformer(\n        transformers=[\n       \
+          \     (\"num\", StandardScaler(), numeric),\n            (\"cat\", OneHotEncoder(handle_unknown=\"\
+          ignore\"), categorical),\n        ]\n    )\n\n    if model_type == \"logreg\"\
+          :\n        clf = LogisticRegression(max_iter=1000)\n    elif model_type\
+          \ == \"logreg_balanced\":\n        clf = LogisticRegression(max_iter=1000,\
+          \ class_weight=\"balanced\")\n    elif model_type == \"rf\":\n        clf\
+          \ = RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1)\n\
+          \    else:\n        raise ValueError(model_type)\n\n    pipe = Pipeline([(\"\
+          preprocess\", preprocessor), (\"clf\", clf)])\n    pipe.fit(X, y)\n    joblib.dump(pipe,\
+          \ model.path)\n\n    with mlflow.start_run(run_name=model_type) as run:\n\
+          \        mlflow.log_param(\"model_type\", model_type)\n        mlflow.sklearn.log_model(pipe,\
+          \ name=\"model\",serialization_format=\"cloudpickle\",)\n        run_id\
+          \ = run.info.run_id\n\n    return namedtuple(\"TrainOut\", [\"run_id\"])(run_id)\n\
+          \n"
+        image: python:3.12-slim
+    exec-verify-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - verify_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'mlflow' 'pandas'\
+          \ 'scikit-learn' 'boto3'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.17.0' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef verify_model(\n    registered_model_name: str,\n    version:\
+          \ str,\n    mlflow_tracking_uri: str,\n    mlflow_s3_endpoint_url: str,\n\
+          \    aws_access_key_id: str,\n    aws_secret_access_key: str,\n):\n    import\
+          \ os\n\n    import mlflow\n\n    os.environ[\"MLFLOW_TRACKING_URI\"] = mlflow_tracking_uri\n\
+          \    os.environ[\"MLFLOW_S3_ENDPOINT_URL\"] = mlflow_s3_endpoint_url\n \
+          \   os.environ[\"AWS_ACCESS_KEY_ID\"] = aws_access_key_id\n    os.environ[\"\
+          AWS_SECRET_ACCESS_KEY\"] = aws_secret_access_key\n    os.environ[\"AWS_DEFAULT_REGION\"\
+          ] = \"us-east-1\"\n    os.environ[\"MLFLOW_S3_IGNORE_TLS\"] = \"true\"\n\
+          \    os.environ[\"GIT_PYTHON_REFRESH\"] = \"quiet\"\n\n    mlflow.set_tracking_uri(mlflow_tracking_uri)\n\
+          \    uri = f\"models:/{registered_model_name}/{version}\"\n    loaded =\
+          \ mlflow.pyfunc.load_model(uri)\n    print(\"Loaded\", uri, type(loaded))\n\
+          \n"
+        image: python:3.12-slim
+pipelineInfo:
+  name: customer-churn-training
+root:
+  dag:
+    tasks:
+      evaluate-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-evaluate-model
+        dependentTasks:
+        - prepare-data
+        - train-model
+        inputs:
+          artifacts:
+            model:
+              taskOutputArtifact:
+                outputArtifactKey: model
+                producerTask: train-model
+            test_data:
+              taskOutputArtifact:
+                outputArtifactKey: test_data
+                producerTask: prepare-data
+          parameters:
+            experiment_name:
+              componentInputParameter: experiment_name
+            mlflow_tracking_uri:
+              componentInputParameter: mlflow_tracking_uri
+            run_id:
+              taskOutputParameter:
+                outputParameterKey: run_id
+                producerTask: train-model
+        taskInfo:
+          name: evaluate-model
+      prepare-data:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-prepare-data
+        inputs:
+          parameters:
+            data_url:
+              componentInputParameter: data_url
+        taskInfo:
+          name: prepare-data
+      register-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-register-model
+        dependentTasks:
+        - evaluate-model
+        - train-model
+        inputs:
+          parameters:
+            aws_access_key_id:
+              componentInputParameter: aws_access_key_id
+            aws_secret_access_key:
+              componentInputParameter: aws_secret_access_key
+            mlflow_s3_endpoint_url:
+              componentInputParameter: mlflow_s3_endpoint_url
+            mlflow_tracking_uri:
+              componentInputParameter: mlflow_tracking_uri
+            registered_model_name:
+              componentInputParameter: registered_model_name
+            run_id:
+              taskOutputParameter:
+                outputParameterKey: run_id
+                producerTask: train-model
+        taskInfo:
+          name: register-model
+      train-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-model
+        dependentTasks:
+        - prepare-data
+        inputs:
+          artifacts:
+            train_data:
+              taskOutputArtifact:
+                outputArtifactKey: train_data
+                producerTask: prepare-data
+          parameters:
+            aws_access_key_id:
+              componentInputParameter: aws_access_key_id
+            aws_secret_access_key:
+              componentInputParameter: aws_secret_access_key
+            experiment_name:
+              componentInputParameter: experiment_name
+            mlflow_s3_endpoint_url:
+              componentInputParameter: mlflow_s3_endpoint_url
+            mlflow_tracking_uri:
+              componentInputParameter: mlflow_tracking_uri
+            model_type:
+              componentInputParameter: model_type
+        taskInfo:
+          name: train-model
+      verify-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-verify-model
+        dependentTasks:
+        - register-model
+        inputs:
+          parameters:
+            aws_access_key_id:
+              componentInputParameter: aws_access_key_id
+            aws_secret_access_key:
+              componentInputParameter: aws_secret_access_key
+            mlflow_s3_endpoint_url:
+              componentInputParameter: mlflow_s3_endpoint_url
+            mlflow_tracking_uri:
+              componentInputParameter: mlflow_tracking_uri
+            registered_model_name:
+              componentInputParameter: registered_model_name
+            version:
+              taskOutputParameter:
+                outputParameterKey: version
+                producerTask: register-model
+        taskInfo:
+          name: verify-model
+  inputDefinitions:
+    parameters:
+      aws_access_key_id:
+        defaultValue: ****
+        isOptional: true
+        parameterType: STRING
+      aws_secret_access_key:
+        defaultValue: ****
+        isOptional: true
+        parameterType: STRING
+      data_url:
+        defaultValue: https://raw.githubusercontent.com/IBM/telco-customer-churn-on-icp4d/master/data/Telco-Customer-Churn.csv
+        isOptional: true
+        parameterType: STRING
+      experiment_name:
+        defaultValue: customer-churn
+        isOptional: true
+        parameterType: STRING
+      mlflow_s3_endpoint_url:
+        defaultValue: http://<MINIO_ENDPOINT>
+        isOptional: true
+        parameterType: STRING
+      mlflow_tracking_uri:
+        defaultValue: http://<MLFLOW_TRACKING_URI>
+        isOptional: true
+        parameterType: STRING
+      model_type:
+        defaultValue: logreg_balanced
+        isOptional: true
+        parameterType: STRING
+      registered_model_name:
+        defaultValue: customer-churn
+        isOptional: true
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.17.0
