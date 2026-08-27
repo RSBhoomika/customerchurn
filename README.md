@@ -125,11 +125,12 @@ flowchart TB
 ## Repository layout (local)
 
 ```text
-customerchurnmlops/
+customerchurn/
 ├── data/telco_churn.csv
 ├── src/
 │   ├── pipeline.py
 │   ├── pipeline.yaml
+|   ├── kserve.yaml
 ├── app/streamlit_app.py
 ├── screenshots/
 ├── requirements.txt
